@@ -129,6 +129,7 @@ static void _action_invoked_cb(GtkWindow* nw, const char* key);
 static NotifyStackLocation get_stack_location_from_string(const char* slocation);
 static void sync_notification_position(NotifyDaemon* daemon, GtkWindow* nw, Window source);
 static void monitor_notification_source_windows(NotifyDaemon* daemon, NotifyTimeout* nt, Window source);
+static void notify_daemon_get_display_numbers(NotifyDaemon* daemon, GHashTable* hints, int* screen_num, int* monitor_num);
 
 G_DEFINE_TYPE(NotifyDaemon, notify_daemon, G_TYPE_OBJECT);
 
@@ -1305,6 +1306,47 @@ static void sync_notification_position(NotifyDaemon* daemon, GtkWindow* nw, Wind
 	gtk_widget_queue_draw (GTK_WIDGET (nw));
 }
 
+static void notify_daemon_get_display_numbers(NotifyDaemon* daemon, GHashTable* hints, int* screen_num, int* monitor_num)
+{
+	NotifyDaemonPrivate* priv = daemon->priv;
+
+	int sn, mn;
+
+	GValue* screen_data = (GValue *) g_hash_table_lookup (hints, "screen");
+	GValue* monitor_data = (GValue *) g_hash_table_lookup (hints, "monitor");
+
+	if (screen_data != NULL && monitor_data != NULL)
+	{
+		sn = g_value_get_int (screen_data);
+		mn = g_value_get_int (monitor_data);
+
+		if (sn < priv->n_screens && mn < priv->screens[sn]->n_stacks)
+		{
+			*screen_num = sn;
+			*monitor_num = mn;
+
+			return;
+		}
+	}
+
+	GdkScreen* screen;
+	gint x, y;
+	gdk_display_get_pointer (gdk_display_get_default (), &screen, &x, &y, NULL);
+
+	sn = gdk_screen_get_number (screen);
+	mn = gdk_screen_get_monitor_at_point (screen, x, y);
+
+	if (mn >= priv->screens[sn]->n_stacks)
+	{
+		/* screw it - dump it on the last one we'll get
+		 a monitors-changed signal soon enough*/
+		mn = priv->screens[sn]->n_stacks - 1;
+	}
+
+	*screen_num = sn;
+	*monitor_num = mn;
+}
+
 GQuark notify_daemon_error_quark(void)
 {
 	static GQuark q = 0;
@@ -1519,22 +1561,9 @@ gboolean notify_daemon_notify_handler(NotifyDaemon* daemon, const char* app_name
 	{
 		int monitor_num;
 		int screen_num;
-		GdkScreen* screen;
-		gint x, y;
 
 		theme_set_notification_arrow (nw, FALSE, 0, 0);
-
-		gdk_display_get_pointer (gdk_display_get_default (), &screen, &x, &y, NULL);
-		screen_num = gdk_screen_get_number (screen);
-		monitor_num = gdk_screen_get_monitor_at_point (screen, x, y);
-
-		if (monitor_num >= priv->screens[screen_num]->n_stacks)
-		{
-			/* screw it - dump it on the last one we'll get
-			 a monitors-changed signal soon enough*/
-			monitor_num = priv->screens[screen_num]->n_stacks - 1;
-		}
-
+		notify_daemon_get_display_numbers (daemon, hints, &screen_num, &monitor_num);
 		notify_stack_add_window (priv->screens[screen_num]->stacks[monitor_num], nw, new_notification);
 	}
 
